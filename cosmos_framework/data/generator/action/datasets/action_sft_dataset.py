@@ -371,3 +371,58 @@ def get_action_libero_sft_dataset(
     if iterable_shuffle:
         return ActionIterableShuffleDataset(sft, seed=episode_shuffle_seed)
     return sft
+
+
+def get_action_g1_hug_sft_dataset(
+    root: str,
+    fps: float = 10.0,
+    chunk_length: int = 16,
+    mode: str = "wam",
+    viewpoint: str = "concat_view",
+    action_normalization: str | None = "quantile",
+    action_stats_path: str | None = None,
+    split: str = "train",
+    resolution: str | int | None = None,
+    max_action_dim: int = 64,
+    tokenizer_config: dict | None = None,
+    cfg_dropout_rate: float = 0.1,
+    append_viewpoint_info: bool = True,
+    append_duration_fps_timestamps: bool = True,
+    append_resolution_info: bool = True,
+    append_idle_frames: bool = True,
+    format_prompt_as_json: bool = False,
+    iterable_shuffle: bool = False,
+    episode_shuffle_seed: int = 42,
+) -> Dataset:
+    """Build the Unitree G1 hug (two-arm box lift) action-policy SFT dataset.
+
+    Feeds ``G1HugLeRobotDataset`` (29-D AgiBot-layout framewise-delta actions, quantile
+    normalized, head + two wrist views as ``concat_view`` or the head view alone as
+    ``ego_view``) through ``ActionTransformPipeline``. ``root`` is a local LeRobot v3 dir.
+    """
+    from cosmos_framework.data.generator.action.datasets.g1_hug_lerobot_dataset import G1HugLeRobotDataset
+
+    dataset = G1HugLeRobotDataset(
+        root=root,
+        fps=fps,
+        chunk_length=chunk_length,
+        mode=mode,
+        viewpoint=viewpoint,
+        action_normalization=action_normalization,
+        action_stats_path=action_stats_path,
+        split=split,
+    )
+    transform = ActionTransformPipeline(
+        tokenizer_config=tokenizer_config,
+        cfg_dropout_rate=cfg_dropout_rate,
+        max_action_dim=max_action_dim,
+        append_viewpoint_info=append_viewpoint_info,
+        append_duration_fps_timestamps=append_duration_fps_timestamps,
+        append_resolution_info=append_resolution_info,
+        append_idle_frames=append_idle_frames,
+        format_prompt_as_json=format_prompt_as_json,
+    )
+    sft = ActionSFTDataset(dataset, transform, resolution)
+    if iterable_shuffle:
+        return ActionIterableShuffleDataset(sft, seed=episode_shuffle_seed)
+    return sft

@@ -841,7 +841,15 @@ class ActionModelService:
             input_video_key = getattr(self.model, "config", None).input_video_key  # type: ignore[union-attr]
         return input_video_key
 
-    def _build_json_prompt(self, prompt: str, *, video: torch.Tensor, image_size: torch.Tensor) -> str:
+    def _build_json_prompt(
+        self,
+        prompt: str,
+        *,
+        video: torch.Tensor,
+        image_size: torch.Tensor,
+        viewpoint: str = _LIBERO_JSON_VIEWPOINT,
+        additional_view_description: str | None = None,
+    ) -> str:
         """Reproduce the training-time JSON prompt for format_prompt_as_json=True runs.
 
         Runs the same ``ActionPromptJsonFormatter`` the training pipeline uses (after
@@ -851,7 +859,7 @@ class ActionModelService:
         the zero ``action`` (total-frame count) mirror the LIBERO concat_view dataset."""
         data_dict: dict[str, Any] = {
             "ai_caption": prompt,
-            "viewpoint": _LIBERO_JSON_VIEWPOINT,
+            "viewpoint": viewpoint,
             "video": video,  # post-pad [C,T,H,W]; formatter reads T for duration
             "image_size": image_size,  # post-pad [H,W]; formatter reads resolution
             "conditioning_fps": torch.tensor(self.cfg.fps, dtype=torch.long),
@@ -860,6 +868,8 @@ class ActionModelService:
             "action": torch.zeros((self.cfg.action_chunk_size, self.cfg.max_action_dim), dtype=torch.float32),
             "idle_frames": torch.tensor(0, dtype=torch.long),
         }
+        if additional_view_description:
+            data_dict["additional_view_description"] = additional_view_description
         formatted = self._prompt_json_formatter(data_dict)["ai_caption"]
         return json.dumps(formatted) if isinstance(formatted, dict) else str(formatted)
 
@@ -879,6 +889,13 @@ class ActionModelService:
         image_size = req.get("image_size")
         if not isinstance(image_size, int) or image_size <= 0:
             raise ValueError("'image_size' must be a positive integer")
+        # Optional: the training viewpoint and view description of non-LIBERO datasets (e.g. G1 hug ego_view).
+        viewpoint = req.get("viewpoint", _LIBERO_JSON_VIEWPOINT)
+        additional_view_description = req.get("additional_view_description")
+        if not isinstance(viewpoint, str) or not (
+            additional_view_description is None or isinstance(additional_view_description, str)
+        ):
+            raise ValueError("'viewpoint' and 'additional_view_description' must be strings")
 
         img_chw_uint8 = _decode_base64_png_to_rgb_uint8(image_b64)
         img_h, img_w = img_chw_uint8.shape[-2:]
@@ -906,7 +923,11 @@ class ActionModelService:
         )
         if self._prompt_json_formatter is not None:
             augmented_prompt = self._build_json_prompt(
-                prompt, video=pad_dict["video"], image_size=pad_dict["image_size"]
+                prompt,
+                video=pad_dict["video"],
+                image_size=pad_dict["image_size"],
+                viewpoint=viewpoint,
+                additional_view_description=additional_view_description,
             )
         else:
             augmented_prompt = _augment_prompt_with_metadata(

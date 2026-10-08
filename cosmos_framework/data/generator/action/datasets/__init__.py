@@ -16,6 +16,7 @@ from cosmos_framework.data.generator.action.datasets.bridge_orig_lerobot_dataset
 from cosmos_framework.data.generator.action.datasets.droid_merged_lerobot_dataset import DROIDMergedLeRobotDataset
 from cosmos_framework.data.generator.action.datasets.droid_lerobot_dataset import DROIDLeRobotDataset
 from cosmos_framework.data.generator.action.datasets.fractal_lerobot_dataset import FractalLeRobotDataset
+from cosmos_framework.data.generator.action.datasets.g1_hug_lerobot_dataset import G1HugLeRobotDataset
 from cosmos_framework.data.generator.action.datasets.human_hand_pose_lerobot_dataset import HumanHandPoseLeRobotDataset
 from cosmos_framework.data.generator.action.datasets.robocasa_lerobot_dataset import RoboCasaLeRobotDataset
 from cosmos_framework.data.generator.action.datasets.libero_lerobot_dataset import LIBEROLeRobotDataset
@@ -30,6 +31,7 @@ __all__ = [
     "DROIDLeRobotDataset",
     "DROIDMergedLeRobotDataset",
     "FractalLeRobotDataset",
+    "G1HugLeRobotDataset",
     "HumanHandPoseLeRobotDataset",
     "RoboCasaLeRobotDataset",
     "LIBEROLeRobotDataset",
