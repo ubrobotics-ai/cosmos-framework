@@ -32,7 +32,14 @@ import pyarrow.parquet as pq
 import torch
 import torch.nn.functional as F
 
-from cosmos_framework.data.generator.action.utils.action_spec import ActionSpec, Gripper, Pos, Rot, build_action_spec
+from cosmos_framework.data.generator.action.utils.action_spec import (
+    ActionSpec,
+    Gripper,
+    Pos,
+    Reserved,
+    Rot,
+    build_action_spec,
+)
 from cosmos_framework.data.generator.action.datasets.base_dataset import ActionBaseDataset
 from cosmos_framework.data.generator.action.libero_pose_utils import libero_action_dim, libero_rotation_format
 from cosmos_framework.data.generator.action.utils.pose_utils import convert_rotation
@@ -83,6 +90,8 @@ class LIBEROLeRobotDataset(ActionBaseDataset):
         val_ratio: float = 0.01,
         seed: int = 0,
         sample_stride: int = 1,
+        value_target: bool = False,
+        value_gamma: float = 0.99,
     ) -> None:
         if action_space != "frame_wise_relative":
             raise NotImplementedError(
@@ -95,6 +104,14 @@ class LIBEROLeRobotDataset(ActionBaseDataset):
             raise ValueError(f"Unsupported split={split!r}. Use train/val/full.")
         if chunk_length % 4 != 0:
             raise ValueError(f"chunk_length must be divisible by 4, got {chunk_length}.")
+        if value_target and not (0.0 < value_gamma <= 1.0):
+            raise ValueError(f"value_gamma must be in (0, 1], got {value_gamma}.")
+        # Cosmos-Policy-style value target: one extra LAST action column holding the
+        # discounted return of the state each action leads to. Every demo succeeds at
+        # its last frame (sparse reward 1 there), so V(frame f) = gamma ** (T - 1 - f).
+        # Set before super().__init__: the base may read action_dim / _action_spec.
+        self._value_target = bool(value_target)
+        self._value_gamma = float(value_gamma)
 
         super().__init__(
             root=root,
@@ -167,6 +184,7 @@ class LIBEROLeRobotDataset(ActionBaseDataset):
         self._ep_vals = ep_vals.astype(np.int64)[kept]
         self._ep_starts = ep_starts.astype(np.int64)[kept]
         kept_counts = ep_counts.astype(np.int64)[kept]
+        self._ep_lengths = kept_counts
         # Within-episode windows only: total - n_kept_episodes * chunk_length valid samples.
         self._valid_cum = np.cumsum(np.maximum(0, kept_counts - self._chunk_length)).astype(np.int64)
 
@@ -180,10 +198,13 @@ class LIBEROLeRobotDataset(ActionBaseDataset):
 
     @property
     def action_dim(self) -> int:
-        return libero_action_dim(self._rotation_space)
+        return libero_action_dim(self._rotation_space) + int(getattr(self, "_value_target", False))
 
     def _action_spec(self) -> ActionSpec:
-        return build_action_spec(Pos(), Rot(libero_rotation_format(self._rotation_space)), Gripper())
+        parts = [Pos(), Rot(libero_rotation_format(self._rotation_space)), Gripper()]
+        if getattr(self, "_value_target", False):
+            parts.append(Reserved(n=1, label="value"))  # ignored by idle detection
+        return build_action_spec(*parts)
 
     @classmethod
     def _stats_path(cls) -> Path:
@@ -284,6 +305,8 @@ class LIBEROLeRobotDataset(ActionBaseDataset):
         # frame_wise_relative: chunk per-frame deltas are the stored actions directly.
         raw = self._row_action[start : start + self._chunk_length]  # [chunk, 7]
         action = self._build_frame_wise_action(raw)
+        if self._value_target:
+            action = torch.cat([action, self._value_column(ep, idx - prev)], dim=-1)
 
         task = self._tasks[int(self._row_task[start])]
         ai_caption = random.choice([p.strip() for p in task.split(" | ") if p.strip()] or [task])
@@ -294,6 +317,13 @@ class LIBEROLeRobotDataset(ActionBaseDataset):
                 "The left half shows the third-person view; the right half shows the wrist-mounted camera."
             )
         return self._build_result(mode=mode, video=video, action=action, ai_caption=ai_caption, **extras)
+
+    def _value_column(self, ep: int, offset: int) -> torch.Tensor:
+        """[chunk, 1] values of the frames the chunk's actions lead to (offset+1 .. offset+chunk)."""
+        length = int(self._ep_lengths[ep])
+        frames = np.arange(offset + 1, offset + self._chunk_length + 1)
+        to_go = np.clip(length - 1 - frames, 0, None)
+        return torch.from_numpy(self._value_gamma ** to_go.astype(np.float64)).float().unsqueeze(-1)
 
     def _build_frame_wise_action(self, raw: np.ndarray) -> torch.Tensor:
         raw_t = torch.from_numpy(np.ascontiguousarray(raw)).float()  # [chunk, 7]
